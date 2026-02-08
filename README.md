@@ -53,6 +53,5 @@ config.ini : Généré automatiquement pour vos préférences (Sources et qualit
 Projet libre d'utilisation pour tous les passionnés de tracker music.
 
 Bonne écoute ! Popov mais pas Russe. 2026
-
 Merci à Gemini http://gemini.google.com pour sa precieuse aide.
 

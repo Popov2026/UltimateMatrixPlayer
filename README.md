@@ -1,5 +1,5 @@
 [README.txt](https://github.com/user-attachments/files/25170047/README.txt)
-🎵 Ultimate Matrix Player (UMP)
+                                                                                              🎵 Ultimate Matrix Player (UMP)
 Ultimate Matrix Player est un lecteur de modules (MOD, S3M, XM, IT) ultra-léger et personnalisable, conçu pour les amateurs de la scène démo et du chiptune. Il combine une esthétique rétro "Matrix" avec une connectivité moderne aux plus grandes bases de données de modules mondiales.
 
 ✨ Fonctionnalités
@@ -10,9 +10,7 @@ Mode Roulette [R] : Téléchargement et lecture instantanée d'un module aléato
 Interface Adaptative : Un bouton unique cyclique pour basculer entre 3 modes de vue :
 
 + Full (Géant) : Interface complète avec logo, VU-mètres et liste de lecture.
-
 - Mini (Medium) : Compact avec VU-mètres uniquement.
-
 -- Nano : Discrétion absolue (barre de contrôle minimaliste).
 
 Visualisation Matrix : Canaux 8 pistes avec défilement de code et VU-mètres LED réactifs.
@@ -39,6 +37,7 @@ Lancez la commande suivante :
 
 Bash
 python -m PyInstaller --noconsole --onefile --add-data "logo.jpg;." --icon="matrix.ico" UMPV15.pyw
+
 Récupérez votre exécutable dans le dossier /dist.
 
 📂 Structure des fichiers
@@ -54,5 +53,6 @@ config.ini : Généré automatiquement pour vos préférences (Sources et qualit
 Projet libre d'utilisation pour tous les passionnés de tracker music.
 
 Bonne écoute ! Popov mais pas Russe. 2026
+
 Merci à Gemini http://gemini.google.com pour sa precieuse aide.
 

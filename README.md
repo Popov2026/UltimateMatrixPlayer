@@ -31,12 +31,16 @@ python UMPV15.pyw
 🛠 Compilation en Exécutable (.exe)
 Pour créer un fichier .exe indépendant avec le logo et l'icône intégrés, utilisez PyInstaller :
 
+
+
 Placez votre logo.jpg et votre mon_icone.ico dans le dossier du script.
 
 Lancez la commande suivante :
 
 Bash
 python -m PyInstaller --noconsole --onefile --add-data "logo.jpg;." --icon="matrix.ico" UMPV15.pyw
+
+
 
 Récupérez votre exécutable dans le dossier /dist.
 

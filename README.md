@@ -6,7 +6,9 @@
 
 **Ultimate Matrix Player** is a very light **MOD, S3M, XM and IT** module player written in
 Python, for demoscene, chiptune and Amiga music fans. It combines a retro "Matrix" interface
-with a roulette mode that downloads modules from [The Mod Archive](https://modarchive.org).
+with a roulette mode that downloads random modules from four online archives:
+[The Mod Archive](https://modarchive.org), [Modules.pl](https://www.modules.pl),
+[Modland](https://ftp.modland.com/pub/modules/) and [AMP](https://amp.dascene.net).
 
 **Current version: V1.6** (script `UMPV16.pyw`). What's new is in the [changelog](#changelog).
 
@@ -34,7 +36,17 @@ with a roulette mode that downloads modules from [The Mod Archive](https://modar
   and in the playlist. If the module has no title, the file name is shown.
 - **Formats**: MOD (Amiga, 4 to 32 channels, including old 15-instrument MODs), S3M, XM and IT.
 - **Roulette mode [R]**: downloads a random module and plays it right away. The download runs
-  in the background, so the interface does not freeze.
+  in the background, so the interface does not freeze. Each source picks from its own site:
+
+  | Source | Site | Categories |
+  |---|---|---|
+  | ModArchive | [modarchive.org](https://modarchive.org) | All (random module), Chiptune, Demo (the site's "Demo Style" genre) |
+  | Modules.pl | [modules.pl](https://www.modules.pl) | S3M, IT, XM (the site's format filter) |
+  | Modland | [ftp.modland.com](https://ftp.modland.com/pub/modules/) | Protracker (MOD), Fasttracker 2 (XM), Screamtracker 3 (S3M), Impulsetracker (IT) |
+  | Amiga Collection | [AMP – Amiga Music Preservation](https://amp.dascene.net) | All (MOD, XM, S3M or IT), MOD, XM |
+
+  Archives are unpacked automatically (zip on Modules.pl, gzip on AMP), and the file is named
+  and given its extension from its actual contents.
 - **Three interface sizes**, cycled with the button on the right:
   - **Full** (large): logo, module name, 8 "Matrix" channel columns, VU meters and playlist;
   - **Mini** (medium): module name, VU meters and playlist;
@@ -96,8 +108,8 @@ It is created next to the script (or the executable) on first launch:
 [SOURCES]
 ModArchive = All, Chiptune, Demo
 Modules.pl = S3M, IT, XM
-Modland = Exotic
-Amiga Collection = All
+Modland = Protracker, Fasttracker 2, Screamtracker 3, Impulsetracker
+Amiga Collection = All, MOD, XM
 
 [SETTINGS]
 mode = full
@@ -117,8 +129,10 @@ category = All
 The `[SOURCES]` section is rewritten on every launch. The `[SETTINGS]` values are saved when
 the window is closed.
 
-Modules downloaded by the roulette are stored in the **`WebMods/`** folder. It is not emptied
-automatically, but the files are small.
+Modules downloaded by the roulette are stored in the **`WebMods/`** folder, with a prefix that
+gives their origin (`MA…`, `MPL…`, `ML_…`, `AMP…`). It is not emptied automatically, but the
+files are small. The folder also holds `modland_allmods.zip`, Modland's list of files (about
+6 MB), downloaded the first time Modland is used and refreshed once a week.
 
 ## Building a Windows executable (.exe)
 
@@ -149,9 +163,16 @@ Created at run time (not in the repository): `config.ini` and the `WebMods/` fol
 
 ## Known limitations
 
-- **Roulette sources**: only **ModArchive** does a real search by category (All, Chiptune,
-  Demo). The **Modules.pl**, **Modland** and **Amiga Collection** entries currently pick a
-  random module from The Mod Archive's catalogue: they do not query those sites yet.
+- **Roulette sources**: the player reads the sites' web pages (ModArchive, Modules.pl) or
+  their download links (Modland, AMP). If a site changes its layout, its source can stop
+  working until the player is updated; the roulette then shows "No module downloaded".
+- **Amiga Collection (AMP)**: the module is drawn from a fixed range of numbers (1 to 185,000,
+  about 182,500 in October 2026). Modules added beyond that are not drawn. Most of AMP is in
+  Amiga formats the player cannot read: only MOD, XM, S3M and IT files are kept.
+- **Modland**: the first use downloads the list of files (about 6 MB), so the first draw takes
+  a few seconds longer.
+- The roulette makes up to 6 draws if a link is dead or the module is in an unsupported
+  format. It gives up at once if the network is down.
 - **"Matrix" animation**: the scrolling notes and the VU meters are decorative. They do not
   reflect what the module is actually playing.
 - **Time display**: it counts from the start of the track, with no total length (pygame does
@@ -164,14 +185,22 @@ Created at run time (not in the repository): `config.ini` and the `WebMods/` fol
 ### V1.6
 - The **module name** (title stored in the MOD, S3M, XM or IT file) is shown under the control
   bar, in the window title bar and in the playlist.
-- Fix: the ModArchive category search never ran. `config.ini` turned the source names into
-  lower case (`modarchive`), so the check for `ModArchive` never matched.
+- **Real roulette sources**: Modules.pl, Modland and Amiga Collection (AMP) now pick a module
+  on their own site instead of The Mod Archive's catalogue. Modland's categories are now
+  Protracker, Fasttracker 2, Screamtracker 3 and Impulsetracker (instead of "Exotic"), and
+  Amiga Collection offers All, MOD and XM.
+- Fix: ModArchive's search by category no longer worked: the API address it used
+  (`xml-search.php`) now answers "404 Not Found". The player now uses the site's genre pages and
+  its "random module" page. Also, `config.ini` turned the source names into lower case
+  (`modarchive`), so the check for `ModArchive` never matched.
+- zip (Modules.pl) and gzip (AMP) archives are unpacked. Files packed with an Amiga packer
+  (PowerPacker…) are no longer taken for a MOD.
 - Fix: a downloaded module's type is detected from its contents. An XM is no longer saved as
   `.mod`, and an error page is no longer saved as a module.
 - Fix: a playlist where no file can be played no longer crashes the program (endless
   recursion).
-- The roulette downloads in the background, so the interface no longer freezes. On the
-  "random" sources it makes up to 5 attempts if the picked ID does not exist.
+- The roulette downloads in the background, so the interface no longer freezes. It makes up
+  to 6 draws if a link is dead or the module cannot be played.
 - Double-click a playlist line to play it. The current track is highlighted.
 - The chosen source and category are remembered. The `delay` setting in `config.ini` is now
   used.
@@ -189,4 +218,5 @@ Free to use for all tracker music fans.
 Enjoy the music! Popov (but not Russian), 2026.
 
 Thanks to [Gemini](https://gemini.google.com) for its valuable help, and to
-[The Mod Archive](https://modarchive.org) for its catalogue.
+[The Mod Archive](https://modarchive.org), [Modules.pl](https://www.modules.pl),
+[Modland](https://ftp.modland.com) and [AMP](https://amp.dascene.net) for their collections.

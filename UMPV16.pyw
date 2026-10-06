@@ -1,7 +1,8 @@
 import tkinter as tk
 from tkinter import filedialog
 import configparser
-import os, pygame, random, urllib.request, ssl, sys, re, threading, queue
+import os, pygame, random, urllib.request, urllib.parse, urllib.error, http.cookiejar, ssl, sys, re, threading, queue
+import gzip, io, time, zipfile
 
 ctx = ssl._create_unverified_context()
 
@@ -29,6 +30,8 @@ except ImportError:
 # Signatures des MOD Amiga (octets 1080-1083) : M.K., FLT4, 6CHN, 16CH...
 MOD_TAGS = (b"M.K.", b"M!K!", b"M&K!", b"N.T.", b"CD81", b"CD61", b"OKTA", b"OCTA", b"FA04", b"FA06", b"FA08")
 MOD_TAG_RE = re.compile(rb"\dCHN|\d\dCH|FLT\d|TDZ\d")
+# Fichiers compressés par un packer Amiga (PowerPacker, XPK...) : illisibles, à ne pas prendre pour un vieux MOD
+PACKED_TAGS = (b"PP20", b"PX20", b"XPKF", b"IMP!", b"RNC\x01", b"RNC\x02")
 
 def detect_module(data, allow_legacy=True):
     """Renvoie (extension, titre) d'après l'en-tête du module, ou (None, '') si ce n'en est pas un.
@@ -39,19 +42,80 @@ def detect_module(data, allow_legacy=True):
     elif data[44:48] == b"SCRM": ext, raw = "s3m", data[0:28]
     elif tag in MOD_TAGS or MOD_TAG_RE.fullmatch(tag): ext, raw = "mod", data[0:20]
     # Vieux MOD Amiga à 15 instruments : pas de signature, on l'accepte si ce n'est pas une page HTML
-    elif allow_legacy and len(data) > 600 and data.lstrip()[:1] != b"<": ext, raw = "mod", data[0:20]
+    elif allow_legacy and len(data) > 600 and data.lstrip()[:1] != b"<" and data[:4] not in PACKED_TAGS: ext, raw = "mod", data[0:20]
     else: return None, ""
     title = raw.split(b"\0")[0].decode("latin-1")
     title = "".join(c for c in title if c.isprintable()).strip()
     return ext, title
 
+def is_mod_name(name):
+    # Sans signature, n'interpréter l'en-tête comme un MOD que si le nom le dit (x.mod ou mod.x à l'Amiga)
+    name = os.path.basename(name).lower()
+    return name.endswith(".mod") or name.startswith("mod.")
+
 def read_module_title(path):
-    name = os.path.basename(path).lower()
     try:
         with open(path, "rb") as f: data = f.read(1084)
     except OSError: return ""
-    # Sans signature, n'interpréter l'en-tête comme un MOD que si le nom le dit (x.mod ou mod.x à l'Amiga)
-    return detect_module(data, allow_legacy=name.endswith(".mod") or name.startswith("mod."))[1]
+    return detect_module(data, allow_legacy=is_mod_name(path))[1]
+
+# --- Roulette : accès aux sites ---
+# User-Agent propre au lecteur : modules.pl et AMP refusent (403) ceux de curl ou de wget
+USER_AGENT = "UltimateMatrixPlayer/1.6 (+https://github.com/Popov2026/UltimateMatrixPlayer)"
+MAX_MODULE_SIZE = 32 * 1024 * 1024  # au-delà on ignore le fichier (protège aussi des archives piégées)
+TRIES = 6  # tirages avant d'abandonner : un lien peut être mort ou le module dans un format non jouable
+# ModArchive : identifiants de genre du site (index.php?request=view_genres) ; "All" = module au hasard
+MODARCHIVE_GENRES = {"Chiptune": 54, "Demo": 55}
+# Modules.pl : valeurs du filtre "Format" de la liste des modules
+MODULES_PL_FORMATS = {"S3M": 3, "IT": 4, "XM": 2}
+# Modland : dossier de ftp.modland.com/pub/modules/ et extension attendue
+MODLAND_DIRS = {"Protracker": ("Protracker", "mod"), "Fasttracker 2": ("Fasttracker 2", "xm"),
+                "Screamtracker 3": ("Screamtracker 3", "s3m"), "Impulsetracker": ("Impulsetracker", "it")}
+# Index de Modland (allmods.txt : "taille<TAB>chemin" par fichier), gardé une semaine dans WebMods
+MODLAND_INDEX_URL = "https://ftp.modland.com/allmods.zip"
+MODLAND_INDEX = os.path.join(WEB_DIR, "modland_allmods.zip")
+MODLAND_INDEX_MAX_AGE = 7 * 24 * 3600
+# AMP : downmod.php?index=N redirige vers FORMAT.titre.gz ; environ 182 500 index en octobre 2026
+AMP_MAX_INDEX = 185000
+AMP_FORMATS = {"All": ("MOD", "XM", "S3M", "IT"), "MOD": ("MOD",), "XM": ("XM",)}
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    # Laisse la redirection remonter en HTTPError pour lire son adresse sans télécharger le fichier
+    def redirect_request(self, *args, **kwargs): return None
+
+def make_opener(*handlers):
+    return urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), *handlers)
+
+def http_get(url, opener=None, data=None, timeout=15):
+    """Renvoie (contenu, nom du fichier d'après l'adresse finale, redirections suivies)."""
+    req = urllib.request.Request(url, data=data, headers={"User-Agent": USER_AGENT})
+    with (opener or make_opener()).open(req, timeout=timeout) as r:
+        content = r.read(MAX_MODULE_SIZE + 1)
+        name = urllib.parse.unquote(urllib.parse.urlsplit(r.geturl()).path.rsplit("/", 1)[-1])
+    if len(content) > MAX_MODULE_SIZE: raise ValueError("fichier trop gros")
+    return content, name
+
+def unpack(data, name):
+    """Liste des fichiers (nom, contenu) : décompresse le zip (modules.pl) ou le gzip (AMP)."""
+    try:
+        if data[:2] == b"\x1f\x8b":
+            data = gzip.GzipFile(fileobj=io.BytesIO(data)).read(MAX_MODULE_SIZE + 1)
+            if len(data) > MAX_MODULE_SIZE: return []
+            return [(name[:-3] if name.lower().endswith(".gz") else name, data)]
+        if data[:4] == b"PK\x03\x04":
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                return [(os.path.basename(i.filename), z.read(i)) for i in z.infolist()
+                        if not i.is_dir() and i.file_size <= MAX_MODULE_SIZE]
+    except Exception: return []
+    return [(name, data)]
+
+def clean_stem(name):
+    # Nom sans l'extension (x.xm) ni le préfixe Amiga (MOD.x), réduit aux caractères sûrs pour un fichier
+    low = name.lower()
+    for e in MOD_EXTS:
+        if low.endswith("." + e): name = name[:-len(e) - 1]; break
+        if low.startswith(e + "."): name = name[len(e) + 1:]; break
+    return re.sub(r"[^\w\-.() ']+", "_", name).strip(" ._")[:60]
 
 class OpenCPMaster:
     def __init__(self, root):
@@ -75,6 +139,7 @@ class OpenCPMaster:
         self.paused = False
         self.downloads = queue.Queue()
         self.downloading = False
+        self.modland_cache = {}
         self.current_title = ""
 
         self.modes = ["full", "mini", "nano"]
@@ -99,8 +164,8 @@ class OpenCPMaster:
         self.config["SOURCES"] = {
             "ModArchive": "All, Chiptune, Demo",
             "Modules.pl": "S3M, IT, XM",
-            "Modland": "Exotic",
-            "Amiga Collection": "All"
+            "Modland": ", ".join(MODLAND_DIRS),
+            "Amiga Collection": ", ".join(AMP_FORMATS)
         }
         if "SETTINGS" not in self.config:
             self.config["SETTINGS"] = {"mode": "full", "show_list": "True", "delay": "80"}
@@ -227,32 +292,114 @@ class OpenCPMaster:
         self.title_label.config(text="... téléchargement / downloading ...")
         threading.Thread(target=self.roulette_worker, args=(self.source_var.get(), self.cat_var.get()), daemon=True).start()
 
-    def roulette_worker(self, source, genre):
+    def roulette_worker(self, source, cat):
+        fetch = {"ModArchive": self.fetch_modarchive, "Modules.pl": self.fetch_modules_pl,
+                 "Modland": self.fetch_modland, "Amiga Collection": self.fetch_amp}.get(source)
         result = None
-        try:
-            if source == "ModArchive":
-                query = "Demo+Style" if genre == "Demo" else genre
-                url_search = f"https://api.modarchive.org/xml-search.php?key=guest&request=search&type=genre&query={query}"
-                resp = urllib.request.urlopen(url_search, timeout=10, context=ctx).read().decode('utf-8', 'replace')
-                ids = re.findall(r'<id>(\d+)</id>', resp)
-                if ids: result = self.download_module(source, random.choice(ids), genre)
-            else:
-                # Plusieurs essais : un identifiant tiré au hasard peut ne correspondre à aucun module
-                for _ in range(5):
-                    result = self.download_module(source, random.randint(34000, 180000), "rand")
-                    if result: break
-        except Exception: pass
+        # Plusieurs essais : un tirage peut tomber sur un lien mort ou un format que le lecteur ne joue pas
+        for _ in range(TRIES if fetch else 0):
+            try: result = fetch(cat)
+            except urllib.error.HTTPError: result = None
+            except OSError: break  # réseau coupé, site injoignable ou délai dépassé : inutile d'insister
+            except Exception: result = None
+            if result: break
         self.downloads.put(result)
 
-    def download_module(self, source, mid, prefix):
-        try: data = urllib.request.urlopen(f"https://api.modarchive.org/downloads.php?moduleid={mid}", timeout=10, context=ctx).read()
-        except Exception: return None
-        ext, title = detect_module(data)
-        if not ext: return None  # page d'erreur HTML ou fichier inconnu
-        # L'extension vient du contenu réel (un XM n'est plus enregistré en .mod)
-        fpath = os.path.join(WEB_DIR, f"{prefix}_{mid}.{ext}")
-        with open(fpath, 'wb') as f: f.write(data)
-        return source, fpath, title
+    def fetch_modarchive(self, cat):
+        if cat in MODARCHIVE_GENRES:
+            # Liste des modules du genre, à une page tirée au hasard
+            base = f"https://modarchive.org/index.php?request=search&search_type=genre&query={MODARCHIVE_GENRES[cat]}"
+            html = http_get(base)[0].decode("utf-8", "replace")
+            pages = max([int(p) for p in re.findall(r"[?&;]page=(\d+)", html)] or [1])
+            page = random.randint(1, pages)
+            if page > 1: html = http_get(f"{base}&page={page}")[0].decode("utf-8", "replace")
+            links = re.findall(r"downloads\.php\?moduleid=(\d+)#([^\"'<>]*)", html)
+        else:
+            # La page "module au hasard" du site ; son premier lien de téléchargement est le module tiré
+            html = http_get("https://modarchive.org/index.php?request=view_random")[0].decode("utf-8", "replace")
+            links = re.findall(r"downloads\.php\?moduleid=(\d+)#([^\"'<>]*)", html)[:1]
+        if not links: return None
+        mid, name = random.choice(links)
+        data = http_get(f"https://api.modarchive.org/downloads.php?moduleid={mid}", timeout=30)[0]
+        return self.save_module("ModArchive", data, urllib.parse.unquote(name), f"MA{mid}")
+
+    def fetch_modules_pl(self, cat):
+        fmt = MODULES_PL_FORMATS.get(cat)
+        if fmt is None: return None
+        # Le filtre par format est un formulaire POST retenu par la session du site (cookie)
+        opener = make_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        base = "https://www.modules.pl/?id=modules"
+        form = urllib.parse.urlencode({"up_format": fmt, "up_genre": 100, "order": "adddate.desc", "filter": "Set"}).encode()
+        html = http_get(base, opener, data=form)[0].decode("latin-1")
+        pages = max([int(p) for p in re.findall(r"id=modules&(?:amp;)?page=(\d+)", html)] or [1])
+        page = random.randint(1, pages)
+        if page > 1: html = http_get(f"{base}&page={page}", opener)[0].decode("latin-1")
+        mids = sorted(set(re.findall(r"dl\.php\?mid=(\d+)", html)))
+        if not mids: return None
+        mid = random.choice(mids)
+        # dl.php redirige vers un zip qui contient le module
+        data, name = http_get(f"https://www.modules.pl/dl.php?mid={mid}", opener, timeout=30)
+        return self.save_module("Modules.pl", data, name, f"MPL{mid}", (cat.lower(),))
+
+    def modland_paths(self, cat):
+        if cat in self.modland_cache: return self.modland_cache[cat]
+        try: fresh = time.time() - os.path.getmtime(MODLAND_INDEX) < MODLAND_INDEX_MAX_AGE
+        except OSError: fresh = False
+        if not fresh:
+            try:
+                data = http_get(MODLAND_INDEX_URL, timeout=60)[0]
+                zipfile.ZipFile(io.BytesIO(data)).getinfo("allmods.txt")  # vérifie l'archive avant de remplacer l'ancienne
+                with open(MODLAND_INDEX + ".tmp", "wb") as f: f.write(data)
+                os.replace(MODLAND_INDEX + ".tmp", MODLAND_INDEX)
+            except Exception:
+                if not os.path.exists(MODLAND_INDEX): raise  # sans réseau, l'ancien index reste utilisable
+        folder, ext = MODLAND_DIRS[cat]
+        with zipfile.ZipFile(MODLAND_INDEX) as z: text = z.read("allmods.txt").decode("utf-8", "replace")
+        paths = []
+        for line in text.splitlines():
+            size, _, path = line.partition("\t")
+            if path.startswith(folder + "/") and path.lower().endswith("." + ext) and size.isdigit() and int(size) <= MAX_MODULE_SIZE:
+                paths.append(path)
+        self.modland_cache[cat] = paths
+        return paths
+
+    def fetch_modland(self, cat):
+        if cat not in MODLAND_DIRS: return None
+        paths = self.modland_paths(cat)
+        if not paths: return None
+        path = random.choice(paths)
+        data, name = http_get("https://ftp.modland.com/pub/modules/" + urllib.parse.quote(path), timeout=30)
+        return self.save_module("Modland", data, name, "ML", (MODLAND_DIRS[cat][1],))
+
+    def fetch_amp(self, cat):
+        formats = AMP_FORMATS.get(cat, AMP_FORMATS["All"])
+        opener = make_opener(NoRedirect)
+        # Le nom du fichier vers lequel redirige downmod.php donne le format : on ne télécharge que les bons
+        for _ in range(20):
+            idx = random.randint(1, AMP_MAX_INDEX)
+            try:
+                http_get(f"https://amp.dascene.net/downmod.php?index={idx}", opener)
+                continue  # pas de redirection : index sans module
+            except urllib.error.HTTPError as e:
+                loc = e.headers.get("Location", "") if e.code in (301, 302, 303, 307, 308) else ""
+            name = urllib.parse.unquote(loc.rsplit("/", 1)[-1])
+            if not loc or name.split(".", 1)[0].upper() not in formats: continue
+            url = urllib.parse.urljoin("https://amp.dascene.net/", loc).replace("http://", "https://", 1)
+            data = http_get(url, timeout=30)[0]
+            return self.save_module("Amiga Collection", data, name, f"AMP{idx}", tuple(f.lower() for f in formats))
+        return None
+
+    def save_module(self, source, data, name, prefix, wanted=MOD_EXTS):
+        """Enregistre dans WebMods le premier module reconnu (zip et gzip décompressés)."""
+        for fname, content in unpack(data, name):
+            ext, title = detect_module(content, allow_legacy=is_mod_name(fname))
+            if ext not in wanted: continue
+            # L'extension vient du contenu réel (un XM n'est jamais enregistré en .mod)
+            stem = clean_stem(fname)
+            fpath = os.path.join(WEB_DIR, f"{prefix}_{stem}.{ext}" if stem else f"{prefix}.{ext}")
+            with open(fpath, "wb") as f: f.write(content)
+            return source, fpath, title or stem
+        return None
 
     def roulette_done(self, result):
         self.downloading = False; self.btn_roulette.config(state=tk.NORMAL)

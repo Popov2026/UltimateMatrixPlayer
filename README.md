@@ -138,6 +138,13 @@ category = All
 The `[SOURCES]` section is rewritten on every launch. The `[SETTINGS]` values are saved when
 the window is closed.
 
+To change the logo shown in Full mode, put a **`logo.jpg`** file next to the script or the
+exe: it takes priority over the one built into the exe. If no logo can be read, the title
+"ULTIMATE MATRIX PLAYER" is shown as text.
+
+If something goes wrong (roulette failing, missing logo), the error details are written to
+**`ump.log`**, next to the script or the exe.
+
 Modules downloaded by the roulette are stored in the **`WebMods/`** folder, named
 `Artist - Title.ext` (for example `Purple Motion - Aquaphobia.s3m`). If a different module
 already has that name, ` (2)`, ` (3)`… is added. The folder is not emptied automatically, but the
@@ -152,8 +159,14 @@ Windows machine, straight from this repository:
 - on every pull request and every change to `main`, the exe is built and tested (pygame plays
   a module, the interface opens, the exe files start). The result can be downloaded from the
   *Actions* tab, under *Artifacts*;
-- when a `vX.Y` tag is pushed (for example `git tag v1.6 && git push origin v1.6`), a
-  **release** is published with:
+- to publish a **release**, either:
+  - *Actions* tab → *Windows build* → **Run workflow**, entering the version (for example
+    `v1.6`): the release and its tag are created;
+  - or *Releases* → **Draft a new release** on GitHub: the exe is added to the release
+    automatically a few minutes after it is published;
+  - or push a `vX.Y` tag (`git tag v1.6 && git push origin v1.6`).
+
+  The release holds:
   - `UltimateMatrixPlayer-vX.Y-windows.zip` (**recommended**): a folder to unzip, holding
     `UltimateMatrixPlayer.exe`;
   - `UltimateMatrixPlayer-vX.Y-portable.exe`: a single file, which starts a little slower;
@@ -215,6 +228,9 @@ Created at run time (not in the repository): `config.ini` and the `WebMods/` fol
 - **Amiga Collection (AMP)**: the module is drawn from a fixed range of numbers (1 to 185,000,
   about 182,500 in October 2026). Modules added beyond that are not drawn. Most of AMP is in
   Amiga formats the player cannot read: only MOD, XM, S3M and IT files are kept.
+- **ModArchive** is sometimes very slow or unreachable (in October 2026 its pages took up to
+  50 s to answer). The player waits up to 45 s per page and 2 min 30 in total, then shows why
+  it failed ("the site does not answer", "error 403"…).
 - **Modland**: the first use downloads the list of files (about 6 MB), so the first draw takes
   a few seconds longer.
 - The roulette makes up to 6 draws if a link is dead or the module is in an unsupported
@@ -255,6 +271,10 @@ Created at run time (not in the repository): `config.ini` and the `WebMods/` fol
 - The file picker filters modules (`*.mod`, `*.s3m`, `*.xm`, `*.it`, and the Amiga `mod.*`
   naming).
 - STOP resets the counter to `00:00`.
+- The logo is looked for next to the exe first; without a readable logo, the title is shown
+  as text.
+- The roulette shows why it failed and writes it to `ump.log`; it waits longer for slow sites
+  (ModArchive).
 - **Windows exe** built and tested by GitHub Actions, published in the Releases (zip and
   portable exe), with measures against antivirus false positives.
 

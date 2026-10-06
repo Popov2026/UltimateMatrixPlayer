@@ -1,0 +1,114 @@
+# Compile l'exe Windows, le teste, et publie une release quand on pousse un tag vX.Y.
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SDL_AUDIODRIVER: dummy
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dépendances
+        run: python -m pip install --upgrade pip pygame pillow
+
+      - name: Test (pygame, interface)
+        run: python .github/scripts/smoke_test.py
+
+      - name: Test réseau (un tirage par source et catégorie)
+        # Les sites peuvent être momentanément indisponibles : informatif, ne bloque pas la compilation
+        continue-on-error: true
+        run: python .github/scripts/smoke_test.py --network
+
+      - name: PyInstaller avec son bootloader recompilé
+        # Le bootloader précompilé de PyInstaller est partagé par des logiciels malveillants, et
+        # beaucoup d'antivirus le signalent : le recompiler ici réduit fortement les faux positifs.
+        shell: pwsh
+        run: |
+          python -m pip download --no-binary pyinstaller --no-deps pyinstaller -d pyi
+          $archive = Get-ChildItem pyi -Filter *.tar.gz | Select-Object -First 1
+          tar -xzf $archive.FullName -C pyi
+          $src = Get-ChildItem pyi -Directory | Select-Object -First 1
+          Push-Location (Join-Path $src.FullName bootloader)
+          python ./waf all --target-arch=64bit
+          if ($LASTEXITCODE -ne 0) { throw "échec de la compilation du bootloader" }
+          Pop-Location
+          python -m pip install $src.FullName
+          python -m PyInstaller --version
+
+      - name: Compilation
+        shell: pwsh
+        run: |
+          $common = @("--noconfirm", "--clean", "--windowed", "--noupx",
+                      "--name", "UltimateMatrixPlayer", "--icon", "Matrix.ico",
+                      "--add-data", "logo.jpg;.", "--version-file", "packaging/version_info.txt")
+          python -m PyInstaller @common --distpath dist UMPV16.pyw
+          if ($LASTEXITCODE -ne 0) { throw "échec PyInstaller (dossier)" }
+          python -m PyInstaller @common --onefile --distpath dist-onefile --workpath build-onefile UMPV16.pyw
+          if ($LASTEXITCODE -ne 0) { throw "échec PyInstaller (exe unique)" }
+
+      - name: Les exe démarrent
+        shell: pwsh
+        run: |
+          foreach ($exe in "dist\UltimateMatrixPlayer\UltimateMatrixPlayer.exe", "dist-onefile\UltimateMatrixPlayer.exe") {
+            $p = Start-Process -FilePath $exe -PassThru
+            Start-Sleep -Seconds 15
+            if ($p.HasExited) { throw "$exe s'est arrêté (code $($p.ExitCode))" }
+            Stop-Process -Id $p.Id -Force
+            Write-Host "OK  $exe"
+          }
+
+      - name: Paquets et empreintes
+        shell: pwsh
+        run: |
+          $ver = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
+          New-Item -ItemType Directory out | Out-Null
+          # Fichiers créés par le test de démarrage : ils n'ont rien à faire dans le paquet
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue dist\UltimateMatrixPlayer\config.ini, dist\UltimateMatrixPlayer\WebMods
+          Compress-Archive -Path dist\UltimateMatrixPlayer -DestinationPath "out\UltimateMatrixPlayer-$ver-windows.zip"
+          Copy-Item dist-onefile\UltimateMatrixPlayer.exe "out\UltimateMatrixPlayer-$ver-portable.exe"
+          Get-ChildItem out | Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
+            Set-Content -Encoding ascii out\SHA256SUMS.txt
+          Get-Content out\SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-build
+          path: out
+      - name: Publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* \
+            --title "Ultimate Matrix Player $GITHUB_REF_NAME" \
+            --notes-file packaging/release_notes.md

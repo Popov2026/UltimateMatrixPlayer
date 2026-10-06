@@ -74,6 +74,12 @@ depuis quatre archives en ligne : [The Mod Archive](https://modarchive.org),
 
 ## Installation et lancement
 
+**Sous Windows, le plus simple** : télécharge l'exe tout prêt dans les
+[Releases](https://github.com/Popov2026/UltimateMatrixPlayer/releases) (rien à installer, voir
+[Créer un exécutable Windows](#créer-un-exécutable-windows-exe) si Windows le bloque).
+
+Sinon, depuis le code source :
+
 Il te faut **Python 3** et deux bibliothèques :
 
 ```bash
@@ -147,16 +153,53 @@ première utilisation de Modland puis renouvelée une fois par semaine.
 
 ## Créer un exécutable Windows (.exe)
 
-Avec [PyInstaller](https://pyinstaller.org), pour obtenir un `.exe` autonome avec le logo et
-l'icône intégrés :
+Les exe sont compilés par **GitHub Actions** (`.github/workflows/windows-build.yml`) sur une
+machine Windows, directement depuis ce dépôt :
+
+- à chaque pull request et à chaque modification de `main`, l'exe est compilé et testé (lecture
+  d'un module par pygame, ouverture de l'interface, démarrage des exe). Le résultat se
+  télécharge dans l'onglet *Actions*, rubrique *Artifacts* ;
+- quand on pousse un tag `vX.Y` (par exemple `git tag v1.6 && git push origin v1.6`), une
+  **release** est publiée avec :
+  - `UltimateMatrixPlayer-vX.Y-windows.zip` (**recommandé**) : un dossier à décompresser,
+    qui contient `UltimateMatrixPlayer.exe` ;
+  - `UltimateMatrixPlayer-vX.Y-portable.exe` : un seul fichier, qui démarre un peu plus
+    lentement ;
+  - `SHA256SUMS.txt` : les empreintes des deux fichiers.
+
+L'exe crée son `config.ini` et son dossier `WebMods/` à côté de lui.
+
+### Windows 11 bloque l'exe ?
+
+L'exe n'est pas signé avec un certificat de développeur (payant). SmartScreen ne le connaît
+donc pas encore et affiche « Windows a protégé votre ordinateur » : clique sur
+**Informations complémentaires** puis **Exécuter quand même**. Si le fichier téléchargé est
+bloqué : clic droit → **Propriétés** → coche **Débloquer** (sur le zip, avant de le
+décompresser).
+
+Pour limiter les faux positifs des antivirus, la compilation :
+
+- recompile le **bootloader** de PyInstaller au lieu d'utiliser celui fourni, que beaucoup
+  d'antivirus signalent parce que des logiciels malveillants l'utilisent aussi ;
+- n'utilise **pas UPX** (compression d'exe souvent jugée suspecte) ;
+- intègre les **informations de version** (Propriétés → Détails) et l'icône ;
+- propose une version en **dossier** (zip), moins souvent signalée que l'exe unique, qui se
+  décompresse à chaque lancement.
+
+Si Defender signale quand même l'exe, c'est un faux positif : on peut l'envoyer à Microsoft
+pour analyse (https://www.microsoft.com/wdsi/filesubmission). Seule une **signature de code**
+fait disparaître l'avertissement SmartScreen ; pour un projet libre, le programme gratuit
+[SignPath Foundation](https://signpath.org) ou le service Azure Trusted Signing sont des
+pistes.
+
+Pour compiler soi-même sous Windows (sans le bootloader recompilé) :
 
 ```bash
-pip install pyinstaller
-python -m PyInstaller --noconsole --onefile --add-data "logo.jpg;." --icon="Matrix.ico" UMPV16.pyw
+pip install pygame pillow pyinstaller
+python -m PyInstaller --noconfirm --windowed --noupx --name UltimateMatrixPlayer --icon Matrix.ico --add-data "logo.jpg;." --version-file packaging/version_info.txt UMPV16.pyw
 ```
 
-L'exécutable se trouve ensuite dans le dossier `dist/`. Il crée son `config.ini` et son dossier
-`WebMods/` à côté de lui.
+Le résultat est dans `dist/UltimateMatrixPlayer/`.
 
 ## Contenu du dépôt
 
@@ -167,7 +210,9 @@ L'exécutable se trouve ensuite dans le dossier `dist/`. Il crée son `config.in
 ├── Matrix.ico          icône de l'exécutable
 ├── Exemple_*.png       captures d'écran des trois modes
 ├── README.md           documentation en anglais
-└── README.fr.md        ce fichier
+├── README.fr.md        ce fichier
+├── packaging/          informations de version de l'exe, notes de release
+└── .github/            compilation et tests Windows (GitHub Actions)
 ```
 
 Créés à l'exécution (non versionnés) : `config.ini` et le dossier `WebMods/`.
@@ -223,6 +268,8 @@ Créés à l'exécution (non versionnés) : `config.ini` et le dossier `WebMods/
 - Le sélecteur de fichiers filtre les modules (`*.mod`, `*.s3m`, `*.xm`, `*.it`, et la
   convention Amiga `mod.*`).
 - STOP remet le compteur à `00:00`.
+- **Exe Windows** compilé et testé par GitHub Actions, publié dans les Releases (zip et exe
+  portable), avec des mesures contre les faux positifs des antivirus.
 
 ### V1.5
 - Première version publiée : trois modes d'affichage, roulette, playlist et `config.ini`.

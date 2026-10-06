@@ -68,6 +68,12 @@ with a roulette mode that downloads random modules from four online archives:
 
 ## Installing and running
 
+**On Windows, the easiest way**: download the ready-made exe from the
+[Releases](https://github.com/Popov2026/UltimateMatrixPlayer/releases) (nothing to install; see
+[Building a Windows executable](#building-a-windows-executable-exe) if Windows blocks it).
+
+Otherwise, from the source code:
+
 You need **Python 3** and two libraries:
 
 ```bash
@@ -140,16 +146,50 @@ files are small. The folder also holds `modland_allmods.zip`, Modland's list of 
 
 ## Building a Windows executable (.exe)
 
-With [PyInstaller](https://pyinstaller.org), to get a standalone `.exe` with the logo and the
-icon built in:
+The exe files are built by **GitHub Actions** (`.github/workflows/windows-build.yml`) on a
+Windows machine, straight from this repository:
+
+- on every pull request and every change to `main`, the exe is built and tested (pygame plays
+  a module, the interface opens, the exe files start). The result can be downloaded from the
+  *Actions* tab, under *Artifacts*;
+- when a `vX.Y` tag is pushed (for example `git tag v1.6 && git push origin v1.6`), a
+  **release** is published with:
+  - `UltimateMatrixPlayer-vX.Y-windows.zip` (**recommended**): a folder to unzip, holding
+    `UltimateMatrixPlayer.exe`;
+  - `UltimateMatrixPlayer-vX.Y-portable.exe`: a single file, which starts a little slower;
+  - `SHA256SUMS.txt`: the checksums of both files.
+
+The exe creates its `config.ini` and `WebMods/` folder next to itself.
+
+### Windows 11 blocks the exe?
+
+The exe is not signed with a (paid) developer certificate, so SmartScreen does not know it yet
+and shows "Windows protected your PC": click **More info**, then **Run anyway**. If the
+downloaded file is blocked: right-click → **Properties** → tick **Unblock** (on the zip,
+before unzipping it).
+
+To reduce antivirus false positives, the build:
+
+- recompiles PyInstaller's **bootloader** instead of using the bundled one, which many
+  antivirus programs flag because malware uses it too;
+- does **not use UPX** (exe compression often seen as suspicious);
+- embeds **version information** (Properties → Details) and the icon;
+- offers a **folder** version (zip), flagged less often than the single exe, which unpacks
+  itself on every launch.
+
+If Defender still flags the exe, it is a false positive: it can be sent to Microsoft for
+analysis (https://www.microsoft.com/wdsi/filesubmission). Only **code signing** removes the
+SmartScreen warning; for a free project, the free [SignPath Foundation](https://signpath.org)
+programme or the Azure Trusted Signing service are options.
+
+To build it yourself on Windows (without the recompiled bootloader):
 
 ```bash
-pip install pyinstaller
-python -m PyInstaller --noconsole --onefile --add-data "logo.jpg;." --icon="Matrix.ico" UMPV16.pyw
+pip install pygame pillow pyinstaller
+python -m PyInstaller --noconfirm --windowed --noupx --name UltimateMatrixPlayer --icon Matrix.ico --add-data "logo.jpg;." --version-file packaging/version_info.txt UMPV16.pyw
 ```
 
-The executable is then in the `dist/` folder. It creates its `config.ini` and `WebMods/` folder
-next to itself.
+The result is in `dist/UltimateMatrixPlayer/`.
 
 ## Repository layout
 
@@ -160,7 +200,9 @@ next to itself.
 ├── Matrix.ico          executable icon
 ├── Exemple_*.png       screenshots of the three modes
 ├── README.md           this file
-└── README.fr.md        French documentation
+├── README.fr.md        French documentation
+├── packaging/          exe version information, release notes
+└── .github/            Windows build and tests (GitHub Actions)
 ```
 
 Created at run time (not in the repository): `config.ini` and the `WebMods/` folder.
@@ -213,6 +255,8 @@ Created at run time (not in the repository): `config.ini` and the `WebMods/` fol
 - The file picker filters modules (`*.mod`, `*.s3m`, `*.xm`, `*.it`, and the Amiga `mod.*`
   naming).
 - STOP resets the counter to `00:00`.
+- **Windows exe** built and tested by GitHub Actions, published in the Releases (zip and
+  portable exe), with measures against antivirus false positives.
 
 ### V1.5
 - First published version: three display modes, roulette, playlist and `config.ini`.

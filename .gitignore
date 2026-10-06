@@ -1,0 +1,6 @@
+config.ini
+WebMods/
+__pycache__/
+build/
+dist/
+*.spec

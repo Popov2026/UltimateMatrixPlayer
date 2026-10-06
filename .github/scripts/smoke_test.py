@@ -45,7 +45,13 @@ if "--network" in sys.argv:
                          ("Modland", list(ump.MODLAND_DIRS)), ("Amiga Collection", list(ump.AMP_FORMATS))]:
         for cat in cats:
             worker.roulette_worker(source, cat); r = q.pop()
-            if not r: print(f"ECHEC  {source} / {cat} : aucun module"); failed += 1; continue
+            if not r:
+                # Un essai direct, pour afficher l'erreur que roulette_worker garde pour lui
+                fetch = {"ModArchive": worker.fetch_modarchive, "Modules.pl": worker.fetch_modules_pl,
+                         "Modland": worker.fetch_modland, "Amiga Collection": worker.fetch_amp}[source]
+                try: why = "aucun module" if not fetch(cat) else "réussi au second essai"
+                except Exception as e: why = repr(e)
+                print(f"ECHEC  {source} / {cat} : {why}"); failed += 1; continue
             try:
                 pygame.mixer.music.load(r[1]); print(f"OK  {source} / {cat} : {os.path.basename(r[1])}")
             except Exception as e:

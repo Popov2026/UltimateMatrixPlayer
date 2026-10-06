@@ -45,8 +45,11 @@ with a roulette mode that downloads random modules from four online archives:
   | Modland | [ftp.modland.com](https://ftp.modland.com/pub/modules/) | Protracker (MOD), Fasttracker 2 (XM), Screamtracker 3 (S3M), Impulsetracker (IT) |
   | Amiga Collection | [AMP – Amiga Music Preservation](https://amp.dascene.net) | All (MOD, XM, S3M or IT), MOD, XM |
 
-  Archives are unpacked automatically (zip on Modules.pl, gzip on AMP), and the file is named
-  and given its extension from its actual contents.
+  The module is always downloaded from the chosen source's own site: a file that would come
+  from another address is refused. Archives are unpacked automatically (zip on Modules.pl,
+  gzip on AMP). The file is saved as **`Artist - Title.ext`** with the names given by the site
+  (just `Title.ext` when the artist is unknown), and its extension comes from its actual
+  contents.
 - **Three interface sizes**, cycled with the button on the right:
   - **Full** (large): logo, module name, 8 "Matrix" channel columns, VU meters and playlist;
   - **Mini** (medium): module name, VU meters and playlist;
@@ -129,8 +132,9 @@ category = All
 The `[SOURCES]` section is rewritten on every launch. The `[SETTINGS]` values are saved when
 the window is closed.
 
-Modules downloaded by the roulette are stored in the **`WebMods/`** folder, with a prefix that
-gives their origin (`MA…`, `MPL…`, `ML_…`, `AMP…`). It is not emptied automatically, but the
+Modules downloaded by the roulette are stored in the **`WebMods/`** folder, named
+`Artist - Title.ext` (for example `Purple Motion - Aquaphobia.s3m`). If a different module
+already has that name, ` (2)`, ` (3)`… is added. The folder is not emptied automatically, but the
 files are small. The folder also holds `modland_allmods.zip`, Modland's list of files (about
 6 MB), downloaded the first time Modland is used and refreshed once a week.
 
@@ -195,6 +199,8 @@ Created at run time (not in the repository): `config.ini` and the `WebMods/` fol
   (`modarchive`), so the check for `ModArchive` never matched.
 - zip (Modules.pl) and gzip (AMP) archives are unpacked. Files packed with an Amiga packer
   (PowerPacker…) are no longer taken for a MOD.
+- Downloaded modules are named `Artist - Title.ext` from the site's information, and each
+  source only accepts a file coming from its own site.
 - Fix: a downloaded module's type is detected from its contents. An XM is no longer saved as
   `.mod`, and an error page is no longer saved as a module.
 - Fix: a playlist where no file can be played no longer crashes the program (endless

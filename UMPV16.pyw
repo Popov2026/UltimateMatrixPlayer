@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import filedialog
 import configparser
 import os, pygame, random, urllib.request, urllib.parse, urllib.error, http.cookiejar, ssl, sys, re, threading, queue
-import gzip, io, time, zipfile
+import gzip, html, io, time, zipfile
 
 ctx = ssl._create_unverified_context()
 
@@ -78,6 +78,9 @@ MODLAND_INDEX_MAX_AGE = 7 * 24 * 3600
 # AMP : downmod.php?index=N redirige vers FORMAT.titre.gz ; environ 182 500 index en octobre 2026
 AMP_MAX_INDEX = 185000
 AMP_FORMATS = {"All": ("MOD", "XM", "S3M", "IT"), "MOD": ("MOD",), "XM": ("XM",)}
+# Domaine d'où chaque source a le droit de télécharger : un module venu d'ailleurs est refusé
+SOURCE_DOMAINS = {"ModArchive": "modarchive.org", "Modules.pl": "modules.pl",
+                  "Modland": "modland.com", "Amiga Collection": "dascene.net"}
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     # Laisse la redirection remonter en HTTPError pour lire son adresse sans télécharger le fichier
@@ -87,13 +90,23 @@ def make_opener(*handlers):
     return urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), *handlers)
 
 def http_get(url, opener=None, data=None, timeout=15):
-    """Renvoie (contenu, nom du fichier d'après l'adresse finale, redirections suivies)."""
+    """Renvoie (contenu, adresse finale après redirections)."""
     req = urllib.request.Request(url, data=data, headers={"User-Agent": USER_AGENT})
     with (opener or make_opener()).open(req, timeout=timeout) as r:
         content = r.read(MAX_MODULE_SIZE + 1)
-        name = urllib.parse.unquote(urllib.parse.urlsplit(r.geturl()).path.rsplit("/", 1)[-1])
+        final_url = r.geturl()
     if len(content) > MAX_MODULE_SIZE: raise ValueError("fichier trop gros")
-    return content, name
+    return content, final_url
+
+def url_name(url):
+    return urllib.parse.unquote(urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1])
+
+def download(source, url, opener=None):
+    """Télécharge un module et vérifie qu'il vient bien du site de la source ; renvoie (contenu, nom du fichier)."""
+    data, final_url = http_get(url, opener, timeout=30)
+    host, domain = (urllib.parse.urlsplit(final_url).hostname or "").lower(), SOURCE_DOMAINS[source]
+    if host != domain and not host.endswith("." + domain): raise ValueError(f"{final_url} n'est pas sur {domain}")
+    return data, url_name(final_url)
 
 def unpack(data, name):
     """Liste des fichiers (nom, contenu) : décompresse le zip (modules.pl) ou le gzip (AMP)."""
@@ -109,13 +122,23 @@ def unpack(data, name):
     except Exception: return []
     return [(name, data)]
 
-def clean_stem(name):
-    # Nom sans l'extension (x.xm) ni le préfixe Amiga (MOD.x), réduit aux caractères sûrs pour un fichier
+def name_stem(name):
+    # Nom d'origine sans l'extension (x.xm) ni le préfixe Amiga (MOD.x) ; "_" sert souvent d'espace
     low = name.lower()
-    for e in MOD_EXTS:
+    for e in MOD_EXTS + ("mptm", "mo3"):
         if low.endswith("." + e): name = name[:-len(e) - 1]; break
         if low.startswith(e + "."): name = name[len(e) + 1:]; break
-    return re.sub(r"[^\w\-.() ']+", "_", name).strip(" ._")[:60]
+    return " ".join(name.replace("_", " ").split())
+
+def is_unknown(artist):
+    return not artist or "unknown" in artist.lower()
+
+def safe_filename(text):
+    # Retire seulement ce que Windows interdit dans un nom de fichier, et les caractères de contrôle
+    text = "".join(c for c in text if c.isprintable() and c not in '<>:"/\\|?*')
+    text = " ".join(text.split())[:120].strip(" .")
+    if text.split(".")[0].upper() in ("CON", "PRN", "AUX", "NUL") or re.fullmatch(r"(?i)(COM|LPT)\d", text.split(".")[0]): text = "_" + text
+    return text
 
 class OpenCPMaster:
     def __init__(self, root):
@@ -307,21 +330,31 @@ class OpenCPMaster:
 
     def fetch_modarchive(self, cat):
         if cat in MODARCHIVE_GENRES:
-            # Liste des modules du genre, à une page tirée au hasard
+            # Liste des modules du genre, à une page tirée au hasard, puis la page du module tiré
             base = f"https://modarchive.org/index.php?request=search&search_type=genre&query={MODARCHIVE_GENRES[cat]}"
-            html = http_get(base)[0].decode("utf-8", "replace")
-            pages = max([int(p) for p in re.findall(r"[?&;]page=(\d+)", html)] or [1])
-            page = random.randint(1, pages)
-            if page > 1: html = http_get(f"{base}&page={page}")[0].decode("utf-8", "replace")
-            links = re.findall(r"downloads\.php\?moduleid=(\d+)#([^\"'<>]*)", html)
+            page = http_get(base)[0].decode("utf-8", "replace")
+            pages = max([int(p) for p in re.findall(r"[?&;]page=(\d+)", page)] or [1])
+            n = random.randint(1, pages)
+            if n > 1: page = http_get(f"{base}&page={n}")[0].decode("utf-8", "replace")
+            mids = sorted(set(re.findall(r"downloads\.php\?moduleid=(\d+)", page)))
+            if not mids: return None
+            mid = random.choice(mids)
+            page = http_get(f"https://modarchive.org/index.php?request=view_by_moduleid&query={mid}")[0].decode("utf-8", "replace")
         else:
-            # La page "module au hasard" du site ; son premier lien de téléchargement est le module tiré
-            html = http_get("https://modarchive.org/index.php?request=view_random")[0].decode("utf-8", "replace")
-            links = re.findall(r"downloads\.php\?moduleid=(\d+)#([^\"'<>]*)", html)[:1]
-        if not links: return None
-        mid, name = random.choice(links)
-        data = http_get(f"https://api.modarchive.org/downloads.php?moduleid={mid}", timeout=30)[0]
-        return self.save_module("ModArchive", data, urllib.parse.unquote(name), f"MA{mid}")
+            # La page "module au hasard" du site est directement la page d'un module
+            page = http_get("https://modarchive.org/index.php?request=view_random")[0].decode("utf-8", "replace")
+            m = re.search(r"downloads\.php\?moduleid=(\d+)", page)
+            if not m: return None
+            mid = m.group(1)
+        # Titre (<h1>titre <span>(FICHIER.MOD)</span>) et artistes enregistrés, quand le site les connaît
+        m = re.search(r"<h1>(.*?)<span", page, re.S)
+        title = html.unescape(m.group(1)).strip() if m else ""
+        m = re.search(r"Registered Artist\(s\):</h2>(.*?)</ul>", page, re.S)
+        artists = [html.unescape(a).strip() for a in re.findall(r"member\.php\?\d+\">([^<]+)</a>", m.group(1))] if m else []
+        data, name = download("ModArchive", f"https://api.modarchive.org/downloads.php?moduleid={mid}")
+        # Un titre illisible (octets bizarres, trop court) cède la place au nom du fichier
+        if sum(c.isalnum() for c in title) < 3 or "\ufffd" in title: title = ""
+        return self.save_module("ModArchive", data, name, " & ".join(artists), title)
 
     def fetch_modules_pl(self, cat):
         fmt = MODULES_PL_FORMATS.get(cat)
@@ -330,16 +363,15 @@ class OpenCPMaster:
         opener = make_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         base = "https://www.modules.pl/?id=modules"
         form = urllib.parse.urlencode({"up_format": fmt, "up_genre": 100, "order": "adddate.desc", "filter": "Set"}).encode()
-        html = http_get(base, opener, data=form)[0].decode("latin-1")
-        pages = max([int(p) for p in re.findall(r"id=modules&(?:amp;)?page=(\d+)", html)] or [1])
-        page = random.randint(1, pages)
-        if page > 1: html = http_get(f"{base}&page={page}", opener)[0].decode("latin-1")
-        mids = sorted(set(re.findall(r"dl\.php\?mid=(\d+)", html)))
+        page = http_get(base, opener, data=form)[0].decode("latin-1")
+        pages = max([int(p) for p in re.findall(r"id=modules&(?:amp;)?page=(\d+)", page)] or [1])
+        n = random.randint(1, pages)
+        if n > 1: page = http_get(f"{base}&page={n}", opener)[0].decode("latin-1")
+        mids = sorted(set(re.findall(r"dl\.php\?mid=(\d+)", page)))
         if not mids: return None
-        mid = random.choice(mids)
-        # dl.php redirige vers un zip qui contient le module
-        data, name = http_get(f"https://www.modules.pl/dl.php?mid={mid}", opener, timeout=30)
-        return self.save_module("Modules.pl", data, name, f"MPL{mid}", (cat.lower(),))
+        # dl.php redirige vers un zip dont le module s'appelle déjà "Artiste - Titre.ext"
+        data, name = download("Modules.pl", f"https://www.modules.pl/dl.php?mid={random.choice(mids)}", opener)
+        return self.save_module("Modules.pl", data, name, wanted=(cat.lower(),))
 
     def modland_paths(self, cat):
         if cat in self.modland_cache: return self.modland_cache[cat]
@@ -347,7 +379,7 @@ class OpenCPMaster:
         except OSError: fresh = False
         if not fresh:
             try:
-                data = http_get(MODLAND_INDEX_URL, timeout=60)[0]
+                data = download("Modland", MODLAND_INDEX_URL)[0]
                 zipfile.ZipFile(io.BytesIO(data)).getinfo("allmods.txt")  # vérifie l'archive avant de remplacer l'ancienne
                 with open(MODLAND_INDEX + ".tmp", "wb") as f: f.write(data)
                 os.replace(MODLAND_INDEX + ".tmp", MODLAND_INDEX)
@@ -368,8 +400,12 @@ class OpenCPMaster:
         paths = self.modland_paths(cat)
         if not paths: return None
         path = random.choice(paths)
-        data, name = http_get("https://ftp.modland.com/pub/modules/" + urllib.parse.quote(path), timeout=30)
-        return self.save_module("Modland", data, name, "ML", (MODLAND_DIRS[cat][1],))
+        # Chemin : Format/Artiste/[coop-Autre/]fichier
+        parts = path.split("/")
+        artist = "" if is_unknown(parts[1]) else parts[1]
+        if artist and len(parts) > 3 and parts[2].startswith("coop-"): artist += " & " + parts[2][5:]
+        data, name = download("Modland", "https://ftp.modland.com/pub/modules/" + urllib.parse.quote(path))
+        return self.save_module("Modland", data, name, artist, wanted=(MODLAND_DIRS[cat][1],))
 
     def fetch_amp(self, cat):
         formats = AMP_FORMATS.get(cat, AMP_FORMATS["All"])
@@ -382,23 +418,33 @@ class OpenCPMaster:
                 continue  # pas de redirection : index sans module
             except urllib.error.HTTPError as e:
                 loc = e.headers.get("Location", "") if e.code in (301, 302, 303, 307, 308) else ""
-            name = urllib.parse.unquote(loc.rsplit("/", 1)[-1])
-            if not loc or name.split(".", 1)[0].upper() not in formats: continue
+            if not loc: continue
             url = urllib.parse.urljoin("https://amp.dascene.net/", loc).replace("http://", "https://", 1)
-            data = http_get(url, timeout=30)[0]
-            return self.save_module("Amiga Collection", data, name, f"AMP{idx}", tuple(f.lower() for f in formats))
+            # Adresse : modules/<lettre>/<Artiste>/FORMAT.titre.gz
+            parts = [urllib.parse.unquote(x) for x in urllib.parse.urlsplit(url).path.split("/")]
+            if parts[-1].split(".", 1)[0].upper() not in formats: continue
+            artist = "" if len(parts) < 3 or is_unknown(parts[-2]) else parts[-2]
+            data, name = download("Amiga Collection", url)
+            return self.save_module("Amiga Collection", data, name, artist, wanted=tuple(f.lower() for f in formats))
         return None
 
-    def save_module(self, source, data, name, prefix, wanted=MOD_EXTS):
-        """Enregistre dans WebMods le premier module reconnu (zip et gzip décompressés)."""
+    def save_module(self, source, data, name, artist="", title="", wanted=MOD_EXTS):
+        """Enregistre dans WebMods, sous le nom "Artiste - Titre.ext", le premier module reconnu."""
         for fname, content in unpack(data, name):
-            ext, title = detect_module(content, allow_legacy=is_mod_name(fname))
+            ext, inner_title = detect_module(content, allow_legacy=is_mod_name(fname))
             if ext not in wanted: continue
+            base = name_stem(title) or name_stem(fname) or inner_title or "module"
+            if artist and not base.lower().startswith(artist.lower()): base = f"{artist} - {base}"
             # L'extension vient du contenu réel (un XM n'est jamais enregistré en .mod)
-            stem = clean_stem(fname)
-            fpath = os.path.join(WEB_DIR, f"{prefix}_{stem}.{ext}" if stem else f"{prefix}.{ext}")
+            base = safe_filename(base) or "module"
+            fpath = os.path.join(WEB_DIR, f"{base}.{ext}")
+            n = 2
+            while os.path.exists(fpath):  # même nom : on garde le fichier s'il est identique, sinon "(2)", "(3)"...
+                with open(fpath, "rb") as f:
+                    if f.read() == content: return source, fpath, inner_title or base
+                fpath = os.path.join(WEB_DIR, f"{base} ({n}).{ext}"); n += 1
             with open(fpath, "wb") as f: f.write(content)
-            return source, fpath, title or stem
+            return source, fpath, inner_title or base
         return None
 
     def roulette_done(self, result):

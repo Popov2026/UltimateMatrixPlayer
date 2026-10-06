@@ -50,8 +50,11 @@ depuis quatre archives en ligne : [The Mod Archive](https://modarchive.org),
   | Modland | [ftp.modland.com](https://ftp.modland.com/pub/modules/) | Protracker (MOD), Fasttracker 2 (XM), Screamtracker 3 (S3M), Impulsetracker (IT) |
   | Amiga Collection | [AMP – Amiga Music Preservation](https://amp.dascene.net) | All (MOD, XM, S3M ou IT), MOD, XM |
 
-  Les archives sont décompressées automatiquement (zip sur Modules.pl, gzip sur AMP), et le
-  fichier reçoit son nom et son extension d'après son contenu réel.
+  Le module est toujours téléchargé sur le site de la source choisie : un fichier qui
+  viendrait d'une autre adresse est refusé. Les archives sont décompressées automatiquement
+  (zip sur Modules.pl, gzip sur AMP). Le fichier est enregistré sous le nom
+  **`Artiste - Titre.ext`** donné par le site (simplement `Titre.ext` si l'artiste est
+  inconnu), et son extension vient de son contenu réel.
 - **Trois tailles d'interface**, que le bouton à droite fait défiler :
   - **Full** (grande) : logo, nom du module, 8 colonnes « Matrix », VU-mètres et playlist ;
   - **Mini** (moyenne) : nom du module, VU-mètres et playlist ;
@@ -135,8 +138,9 @@ category = All
 La section `[SOURCES]` est réécrite à chaque lancement. Les valeurs de `[SETTINGS]` sont
 enregistrées à la fermeture de la fenêtre.
 
-Les modules téléchargés par la roulette sont rangés dans le dossier **`WebMods/`**, avec un
-préfixe qui indique leur origine (`MA…`, `MPL…`, `ML_…`, `AMP…`). Il n'est pas vidé
+Les modules téléchargés par la roulette sont rangés dans le dossier **`WebMods/`**, sous le nom
+`Artiste - Titre.ext` (par exemple `Purple Motion - Aquaphobia.s3m`). Si un autre module porte
+déjà ce nom, ` (2)`, ` (3)`… est ajouté. Le dossier n'est pas vidé
 automatiquement, mais les fichiers sont petits. Le dossier contient aussi
 `modland_allmods.zip`, la liste des fichiers de Modland (6 Mo environ), téléchargée à la
 première utilisation de Modland puis renouvelée une fois par semaine.
@@ -205,6 +209,8 @@ Créés à l'exécution (non versionnés) : `config.ini` et le dossier `WebMods/
   réussissait jamais.
 - Les archives zip (Modules.pl) et gzip (AMP) sont décompressées. Un fichier compressé par un
   packer Amiga (PowerPacker…) n'est plus pris pour un MOD.
+- Les modules téléchargés sont nommés `Artiste - Titre.ext` d'après les informations du site,
+  et chaque source n'accepte qu'un fichier venu de son propre site.
 - Correction : le type d'un module téléchargé est reconnu d'après son contenu. Un XM n'est plus
   enregistré en `.mod`, et une page d'erreur n'est plus enregistrée comme un module.
 - Correction : une playlist où aucun fichier n'est lisible ne fait plus planter le programme

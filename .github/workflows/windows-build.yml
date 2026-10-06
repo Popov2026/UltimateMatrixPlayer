@@ -83,6 +83,20 @@ jobs:
             Write-Host "OK  $exe"
           }
 
+      - name: Les exe trouvent leur logo et lisent un module (--selftest)
+        shell: pwsh
+        run: |
+          python .github/scripts/smoke_test.py --write-mod "$PWD\test.mod"
+          foreach ($exe in "dist\UltimateMatrixPlayer\UltimateMatrixPlayer.exe", "dist-onefile\UltimateMatrixPlayer.exe") {
+            $p = Start-Process -FilePath $exe -ArgumentList "--selftest", "$PWD\test.mod" -PassThru
+            if (-not $p.WaitForExit(120000)) { Stop-Process -Id $p.Id -Force; throw "$exe --selftest ne se termine pas" }
+            $report = Get-Content (Join-Path (Split-Path $exe) "ump_selftest.txt") -Raw
+            Write-Host "== $exe"; Write-Host $report
+            foreach ($want in "pillow: OK", "logo: OK", "mixer: OK", "module: OK") {
+              if ($report -notmatch [regex]::Escape($want)) { throw "$exe : « $want » manquant" }
+            }
+          }
+
       - name: Paquets et empreintes
         shell: pwsh
         run: |
@@ -90,7 +104,7 @@ jobs:
           if (-not $ver) { $ver = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" } }
           New-Item -ItemType Directory out | Out-Null
           # Fichiers créés par le test de démarrage : ils n'ont rien à faire dans le paquet
-          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue dist\UltimateMatrixPlayer\config.ini, dist\UltimateMatrixPlayer\WebMods
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue dist\UltimateMatrixPlayer\config.ini, dist\UltimateMatrixPlayer\WebMods, dist\UltimateMatrixPlayer\ump.log, dist\UltimateMatrixPlayer\ump_selftest.txt
           Compress-Archive -Path dist\UltimateMatrixPlayer -DestinationPath "out\UltimateMatrixPlayer-$ver-windows.zip"
           Copy-Item dist-onefile\UltimateMatrixPlayer.exe "out\UltimateMatrixPlayer-$ver-portable.exe"
           Get-ChildItem out | Get-FileHash -Algorithm SHA256 |

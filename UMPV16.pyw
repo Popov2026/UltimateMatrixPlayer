@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import filedialog
 import configparser
 import os, pygame, random, urllib.request, urllib.parse, urllib.error, http.cookiejar, ssl, sys, re, threading, queue
-import gzip, html, io, time, zipfile
+import gzip, html, io, socket, time, zipfile
 
 ctx = ssl._create_unverified_context()
 
@@ -18,14 +18,25 @@ else:
 
 CONFIG_FILE = os.path.join(EXE_DIR, "config.ini")
 WEB_DIR = os.path.join(EXE_DIR, "WebMods")
-LOGO_PATH = os.path.join(BASE_DIR, "logo.jpg")
+# logo.jpg posé à côté de l'exe (ou du script) passe avant celui intégré à l'exe
+LOGO_PATHS = list(dict.fromkeys([os.path.join(EXE_DIR, "logo.jpg"), os.path.join(BASE_DIR, "logo.jpg")]))
+LOG_FILE = os.path.join(EXE_DIR, "ump.log")
 MOD_EXTS = ("mod", "s3m", "xm", "it")
 
 try:
     from PIL import Image, ImageTk
-    HAS_PILLOW = True
-except ImportError:
-    HAS_PILLOW = False
+    HAS_PILLOW, PILLOW_ERROR = True, ""
+except ImportError as e:
+    HAS_PILLOW, PILLOW_ERROR = False, repr(e)
+
+def log(msg):
+    """Note une erreur dans ump.log, à côté de l'exe (le fichier repart de zéro au-delà de 256 Ko)."""
+    try:
+        if os.path.getsize(LOG_FILE) > 256 * 1024: os.remove(LOG_FILE)
+    except OSError: pass
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f: f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
+    except OSError: pass
 
 # Signatures des MOD Amiga (octets 1080-1083) : M.K., FLT4, 6CHN, 16CH...
 MOD_TAGS = (b"M.K.", b"M!K!", b"M&K!", b"N.T.", b"CD81", b"CD61", b"OKTA", b"OCTA", b"FA04", b"FA06", b"FA08")
@@ -64,6 +75,9 @@ def read_module_title(path):
 USER_AGENT = "UltimateMatrixPlayer/1.6 (+https://github.com/Popov2026/UltimateMatrixPlayer)"
 MAX_MODULE_SIZE = 32 * 1024 * 1024  # au-delà on ignore le fichier (protège aussi des archives piégées)
 TRIES = 6  # tirages avant d'abandonner : un lien peut être mort ou le module dans un format non jouable
+PAGE_TIMEOUT = 45      # secondes : certains sites (modarchive.org) sont très lents à répondre
+DOWNLOAD_TIMEOUT = 60
+ROULETTE_DEADLINE = 150  # au-delà, la roulette s'arrête même s'il reste des essais
 # ModArchive : identifiants de genre du site (index.php?request=view_genres) ; "All" = module au hasard
 MODARCHIVE_GENRES = {"Chiptune": 54, "Demo": 55}
 # Modules.pl : valeurs du filtre "Format" de la liste des modules
@@ -89,7 +103,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 def make_opener(*handlers):
     return urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), *handlers)
 
-def http_get(url, opener=None, data=None, timeout=15):
+def http_get(url, opener=None, data=None, timeout=PAGE_TIMEOUT):
     """Renvoie (contenu, adresse finale après redirections)."""
     req = urllib.request.Request(url, data=data, headers={"User-Agent": USER_AGENT})
     with (opener or make_opener()).open(req, timeout=timeout) as r:
@@ -103,7 +117,7 @@ def url_name(url):
 
 def download(source, url, opener=None):
     """Télécharge un module et vérifie qu'il vient bien du site de la source ; renvoie (contenu, nom du fichier)."""
-    data, final_url = http_get(url, opener, timeout=30)
+    data, final_url = http_get(url, opener, timeout=DOWNLOAD_TIMEOUT)
     host, domain = (urllib.parse.urlsplit(final_url).hostname or "").lower(), SOURCE_DOMAINS[source]
     if host != domain and not host.endswith("." + domain): raise ValueError(f"{final_url} n'est pas sur {domain}")
     return data, url_name(final_url)
@@ -129,6 +143,15 @@ def name_stem(name):
         if low.endswith("." + e): name = name[:-len(e) - 1]; break
         if low.startswith(e + "."): name = name[len(e) + 1:]; break
     return " ".join(name.replace("_", " ").split())
+
+def explain_error(e):
+    """Raison courte d'un échec, pour l'affichage (le détail complet va dans ump.log)."""
+    if isinstance(e, urllib.error.HTTPError): return f"le site répond « erreur {e.code} »"
+    reason = getattr(e, "reason", e)
+    if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason): return "le site ne répond pas (délai dépassé)"
+    if isinstance(e, urllib.error.URLError): return "site injoignable (connexion Internet ?)"
+    if isinstance(e, ValueError) and "n'est pas sur" in str(e): return "fichier refusé : il ne vient pas du site"
+    return f"erreur : {e}"
 
 def is_unknown(artist):
     return not artist or "unknown" in artist.lower()
@@ -195,15 +218,24 @@ class OpenCPMaster:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f: self.config.write(f)
         self.sources_map = {k: [c.strip() for c in v.split(",")] for k, v in self.config.items("SOURCES")}
 
+    def load_logo(self):
+        if not HAS_PILLOW: log(f"logo : Pillow absent ({PILLOW_ERROR})"); return None
+        for path in LOGO_PATHS:
+            if not os.path.exists(path): continue
+            try:
+                img = Image.open(path).convert("RGB").resize((1030, 140), Image.Resampling.LANCZOS)
+                return ImageTk.PhotoImage(img)
+            except Exception as e: log(f"logo {path} : {e!r}")
+        log("logo : aucun logo.jpg lisible dans " + ", ".join(LOGO_PATHS))
+        return None
+
     def setup_ui(self):
         self.header_main = tk.Frame(self.root, bg="#000")
-        if HAS_PILLOW and os.path.exists(LOGO_PATH):
-            try:
-                img = Image.open(LOGO_PATH)
-                img = img.resize((1030, 140), Image.Resampling.LANCZOS)
-                self.logo_img = ImageTk.PhotoImage(img)
-                tk.Label(self.header_main, image=self.logo_img, bg="#000").pack(pady=5)
-            except: pass
+        self.logo_img = self.load_logo()
+        if self.logo_img: tk.Label(self.header_main, image=self.logo_img, bg="#000").pack(pady=5)
+        else:
+            # Sans image lisible, le nom reste écrit en grand
+            tk.Label(self.header_main, text="ULTIMATE MATRIX PLAYER", font=("Impact", 48), fg="#0f0", bg="#000").pack(pady=5)
 
         self.ctrl_bar = tk.Frame(self.root, bg="#111", bd=1, relief=tk.FLAT)
         self.ctrl_bar.pack(fill=tk.X, side=tk.TOP, padx=5, pady=2)
@@ -318,15 +350,19 @@ class OpenCPMaster:
     def roulette_worker(self, source, cat):
         fetch = {"ModArchive": self.fetch_modarchive, "Modules.pl": self.fetch_modules_pl,
                  "Modland": self.fetch_modland, "Amiga Collection": self.fetch_amp}.get(source)
-        result = None
+        result, why = None, "aucun module jouable trouvé"
+        deadline = time.time() + ROULETTE_DEADLINE
         # Plusieurs essais : un tirage peut tomber sur un lien mort ou un format que le lecteur ne joue pas
         for _ in range(TRIES if fetch else 0):
             try: result = fetch(cat)
-            except urllib.error.HTTPError: result = None
-            except OSError: break  # réseau coupé, site injoignable ou délai dépassé : inutile d'insister
-            except Exception: result = None
-            if result: break
-        self.downloads.put(result)
+            except Exception as e:
+                result, why = None, explain_error(e)
+                log(f"roulette {source} / {cat} : {e!r}")
+                # Pas de réseau du tout (nom de site introuvable, connexion refusée) : inutile d'insister
+                if isinstance(e, urllib.error.URLError) and not isinstance(e, urllib.error.HTTPError) and "timed out" not in str(e.reason): break
+            if result or time.time() > deadline: break
+        if not result and why == "aucun module jouable trouvé": log(f"roulette {source} / {cat} : {why}")
+        self.downloads.put(result or ("error", f"{source} : {why}"))
 
     def fetch_modarchive(self, cat):
         if cat in MODARCHIVE_GENRES:
@@ -449,9 +485,10 @@ class OpenCPMaster:
 
     def roulette_done(self, result):
         self.downloading = False; self.btn_roulette.config(state=tk.NORMAL)
-        if not result:
-            self.title_label.config(text="Aucun module récupéré / No module downloaded")
-            self.root.after(3000, self.restore_title); return
+        if not result or result[0] == "error":
+            why = result[1] if result else ""
+            self.title_label.config(text=f"Aucun module récupéré / No module downloaded — {why}")
+            self.root.after(8000, self.restore_title); return
         source, fpath, title = result
         self.add_to_playlist(fpath, source, title)
         self.current_index = len(self.playlist)-1; self.start_song()
@@ -524,5 +561,23 @@ class OpenCPMaster:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f: self.config.write(f)
         self.root.destroy()
 
+def selftest(module_path=None):
+    """UltimateMatrixPlayer.exe --selftest [fichier] : écrit ump_selftest.txt à côté de l'exe puis quitte.
+    Sert à vérifier un exe compilé (logo trouvé, Pillow et pygame présents, module lisible)."""
+    lines = []
+    root = tk.Tk(); app = OpenCPMaster(root)
+    lines.append(f"pillow: {'OK' if HAS_PILLOW else 'ABSENT ' + PILLOW_ERROR}")
+    lines.append(f"logo: {'OK' if app.logo_img else 'ABSENT'} ({', '.join(LOGO_PATHS)})")
+    lines.append(f"mixer: {'OK' if pygame.mixer.get_init() else 'ABSENT'}")
+    if module_path:
+        try: pygame.mixer.music.load(module_path); lines.append(f"module: OK {read_module_title(module_path)}")
+        except Exception as e: lines.append(f"module: ERREUR {e!r}")
+    root.destroy()
+    with open(os.path.join(EXE_DIR, "ump_selftest.txt"), "w", encoding="utf-8") as f: f.write("\n".join(lines) + "\n")
+
 if __name__ == "__main__":
-    root = tk.Tk(); app = OpenCPMaster(root); root.mainloop()
+    if "--selftest" in sys.argv:
+        args = sys.argv[sys.argv.index("--selftest") + 1:]
+        selftest(args[0] if args else None)
+    else:
+        root = tk.Tk(); app = OpenCPMaster(root); root.mainloop()

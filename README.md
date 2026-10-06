@@ -152,8 +152,14 @@ Windows machine, straight from this repository:
 - on every pull request and every change to `main`, the exe is built and tested (pygame plays
   a module, the interface opens, the exe files start). The result can be downloaded from the
   *Actions* tab, under *Artifacts*;
-- when a `vX.Y` tag is pushed (for example `git tag v1.6 && git push origin v1.6`), a
-  **release** is published with:
+- to publish a **release**, either:
+  - *Actions* tab → *Windows build* → **Run workflow**, entering the version (for example
+    `v1.6`): the release and its tag are created;
+  - or *Releases* → **Draft a new release** on GitHub: the exe is added to the release
+    automatically a few minutes after it is published;
+  - or push a `vX.Y` tag (`git tag v1.6 && git push origin v1.6`).
+
+  The release holds:
   - `UltimateMatrixPlayer-vX.Y-windows.zip` (**recommended**): a folder to unzip, holding
     `UltimateMatrixPlayer.exe`;
   - `UltimateMatrixPlayer-vX.Y-portable.exe`: a single file, which starts a little slower;

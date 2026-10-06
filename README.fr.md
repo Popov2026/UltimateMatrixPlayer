@@ -159,8 +159,14 @@ machine Windows, directement depuis ce dépôt :
 - à chaque pull request et à chaque modification de `main`, l'exe est compilé et testé (lecture
   d'un module par pygame, ouverture de l'interface, démarrage des exe). Le résultat se
   télécharge dans l'onglet *Actions*, rubrique *Artifacts* ;
-- quand on pousse un tag `vX.Y` (par exemple `git tag v1.6 && git push origin v1.6`), une
-  **release** est publiée avec :
+- pour publier une **release**, au choix :
+  - onglet *Actions* → *Windows build* → **Run workflow**, en indiquant la version (par
+    exemple `v1.6`) : la release et son tag sont créés ;
+  - ou *Releases* → **Draft a new release** sur GitHub : l'exe est ajouté automatiquement à
+    la release quelques minutes après sa publication ;
+  - ou pousser un tag `vX.Y` (`git tag v1.6 && git push origin v1.6`).
+
+  La release contient :
   - `UltimateMatrixPlayer-vX.Y-windows.zip` (**recommandé**) : un dossier à décompresser,
     qui contient `UltimateMatrixPlayer.exe` ;
   - `UltimateMatrixPlayer-vX.Y-portable.exe` : un seul fichier, qui démarre un peu plus

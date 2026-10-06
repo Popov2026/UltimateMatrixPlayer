@@ -1,4 +1,7 @@
-# Compile l'exe Windows, le teste, et publie une release quand on pousse un tag vX.Y.
+# Compile l'exe Windows, le teste, et le publie dans une release. Trois façons de publier :
+# - Actions > Windows build > Run workflow, en indiquant la version (ex. v1.6) ;
+# - créer une release sur GitHub (Releases > Draft a new release) : l'exe y est ajouté ;
+# - pousser un tag vX.Y.
 name: Windows build
 
 on:
@@ -6,7 +9,14 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version à publier en release (ex. v1.6) ; vide = simple compilation"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -76,7 +86,8 @@ jobs:
       - name: Paquets et empreintes
         shell: pwsh
         run: |
-          $ver = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
+          $ver = "${{ inputs.version }}"
+          if (-not $ver) { $ver = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" } }
           New-Item -ItemType Directory out | Out-Null
           # Fichiers créés par le test de démarrage : ils n'ont rien à faire dans le paquet
           Remove-Item -Recurse -Force -ErrorAction SilentlyContinue dist\UltimateMatrixPlayer\config.ini, dist\UltimateMatrixPlayer\WebMods
@@ -95,10 +106,12 @@ jobs:
 
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # Une release créée sur GitHub déclenche aussi la création du tag : un seul envoi à la fois
+    concurrency: release-${{ inputs.version || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -108,7 +121,17 @@ jobs:
       - name: Publication
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.version || github.ref_name }}
         run: |
-          gh release create "$GITHUB_REF_NAME" out/* \
-            --title "Ultimate Matrix Player $GITHUB_REF_NAME" \
-            --notes-file packaging/release_notes.md
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # Release déjà créée (sur GitHub ou par un autre passage) : on y ajoute ou remplace les fichiers
+            gh release upload "$TAG" out/* --clobber
+            if [ -z "$(gh release view "$TAG" --json body -q .body)" ]; then
+              gh release edit "$TAG" --notes-file packaging/release_notes.md
+            fi
+          else
+            # Crée le tag sur le commit compilé s'il n'existe pas encore
+            gh release create "$TAG" out/* --target "$GITHUB_SHA" \
+              --title "Ultimate Matrix Player $TAG" \
+              --notes-file packaging/release_notes.md
+          fi
